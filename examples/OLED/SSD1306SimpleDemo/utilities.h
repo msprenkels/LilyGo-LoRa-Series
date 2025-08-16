@@ -37,7 +37,7 @@
 // #define T3_S3_V1_2_SX1278
 // #define T3_S3_V1_2_SX1280
 // #define T3_S3_V1_2_SX1280_PA
-// #define T3_S3_V1_2_LR1121
+#define T3_S3_V1_2_LR1121
 
 // #define T_MOTION
 

@@ -25,8 +25,14 @@
 #include <RadioLib.h>
 #include "LoRaBoards.h"
 
+// OLED Display includes
+#include <Wire.h>
+#include <U8g2lib.h>
+
 #include <Preferences.h>
 Preferences store;
+
+// OLED Display object - already defined in LoRaBoards.h
 
 #if  defined(USING_SX1276)
 SX1276 radio = new Module(RADIO_CS_PIN, RADIO_DIO0_PIN, RADIO_RST_PIN, RADIO_DIO1_PIN);
@@ -40,18 +46,18 @@ LR1121 radio = new Module(RADIO_CS_PIN, RADIO_DIO9_PIN, RADIO_RST_PIN, RADIO_BUS
 
 // joinEUI - previous versions of LoRaWAN called this AppEUI
 // for development purposes you can use all zeros - see wiki for details
-#define RADIOLIB_LORAWAN_JOIN_EUI  0x0000000000000000
+#define RADIOLIB_LORAWAN_JOIN_EUI  0x240708D6F45C3DBE
 
 
 // the Device EUI & two keys can be generated on the TTN console
 #ifndef RADIOLIB_LORAWAN_DEV_EUI   // Replace with your Device EUI
-#define RADIOLIB_LORAWAN_DEV_EUI   0x---------------
+#define RADIOLIB_LORAWAN_DEV_EUI   0x58A0CB00001166AB
 #endif
 #ifndef RADIOLIB_LORAWAN_APP_KEY   // Replace with your App Key 
-#define RADIOLIB_LORAWAN_APP_KEY   0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--
+#define RADIOLIB_LORAWAN_APP_KEY   0x24, 0x07, 0x08, 0xD6, 0xF4, 0x5C, 0x3D, 0xBE, 0x6D, 0x17, 0x8C, 0x3A, 0x38, 0x7C, 0x82, 0xE6
 #endif
 #ifndef RADIOLIB_LORAWAN_NWK_KEY   // Put your Nwk Key here
-#define RADIOLIB_LORAWAN_NWK_KEY   0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--, 0x--
+#define RADIOLIB_LORAWAN_NWK_KEY   0x24, 0x07, 0x08, 0xD6, 0xF4, 0x5C, 0x3D, 0xBE, 0x6D, 0x17, 0x8C, 0x3A, 0x38, 0x7C, 0x82, 0xE6
 #endif
 
 // how often to send an uplink - consider legal & FUP constraints - see notes
@@ -126,10 +132,10 @@ String stateDecode(const int16_t result)
         return "RADIOLIB_ERR_COMMAND_QUEUE_ITEM_NOT_FOUND";
     case RADIOLIB_ERR_JOIN_NONCE_INVALID:
         return "RADIOLIB_ERR_JOIN_NONCE_INVALID";
-    case RADIOLIB_ERR_MIC_MISMATCH:
-        return "RADIOLIB_ERR_MIC_MISMATCH";
-    case RADIOLIB_ERR_MULTICAST_FCNT_INVALID:
-        return "RADIOLIB_ERR_MULTICAST_FCNT_INVALID";
+    // case RADIOLIB_ERR_MIC_MISMATCH:
+    //     return "RADIOLIB_ERR_MIC_MISMATCH";
+    // case RADIOLIB_ERR_MULTICAST_FCNT_INVALID:
+    //     return "RADIOLIB_ERR_MULTICAST_FCNT_INVALID";
     case RADIOLIB_ERR_DWELL_TIME_EXCEEDED:
         return "RADIOLIB_ERR_DWELL_TIME_EXCEEDED";
     case RADIOLIB_ERR_CHECKSUM_MISMATCH:
@@ -182,9 +188,27 @@ void setup()
 {
     Serial.begin(115200);
 
-    while (!Serial);
-
     setupBoards();
+    
+    // Initialize OLED Display
+    Wire.begin(I2C_SDA, I2C_SCL);
+    u8g2->begin();
+    u8g2->enableUTF8Print();
+    u8g2->setFont(u8g2_font_6x10_tr);
+    u8g2->setFontDirection(0);
+    
+    // Show initial status on OLED
+    u8g2->clearBuffer();
+    u8g2->setFont(u8g2_font_NokiaLargeBold_tf);
+    char deveui_init[20];
+    sprintf(deveui_init, "%016llX", RADIOLIB_LORAWAN_DEV_EUI);
+    uint16_t str_w = u8g2->getStrWidth(deveui_init);
+    u8g2->drawStr((u8g2->getWidth() - str_w) / 2, 16, deveui_init);
+    u8g2->drawHLine(5, 21, u8g2->getWidth() - 5);
+    u8g2->setFont(u8g2_font_6x10_tr);
+    u8g2->drawStr(0, 35, "LoRaWAN OTAA");
+    u8g2->drawStr(0, 50, "Initializing...");
+    u8g2->sendBuffer();
 
 #ifdef  RADIO_TCXO_ENABLE
     pinMode(RADIO_TCXO_ENABLE, OUTPUT);
@@ -201,6 +225,10 @@ void setup()
     Serial.println(F("Initialise the radio"));
     state = radio.begin();
     debug(state != RADIOLIB_ERR_NONE, F("Initialise radio failed"), state, true);
+
+    // Setup LED for powerbank keep-alive
+    pinMode(BOARD_LED, OUTPUT);
+    digitalWrite(BOARD_LED, !LED_ON); // Start with LED off
 
 #ifdef USING_DIO2_AS_RF_SWITCH
 #ifdef USING_SX1262
@@ -256,7 +284,7 @@ void setup()
 #endif
 
     // Override the default join rate
-    uint8_t joinDR = 4;
+    uint8_t joinDR = 0;  // SF12 for maximum range
 
     // Setup the OTAA session information
     node.beginOTAA(joinEUI, devEUI, nwkKey, appKey);
@@ -291,15 +319,36 @@ void setup()
         Serial.println(F("No Nonces saved - starting fresh."));
     }
 
+    // Add option to clear problematic nonces if needed
+    // Uncomment the next line if you're getting DevNonce errors in ChirpStack
+    // store.remove("nonces");  // This will force fresh nonce generation
+
 
     // if we got here, there was no session to restore, so start trying to join
-    uint32_t sleepForSeconds = 60*1000;
+    uint32_t sleepForSeconds = 10*1000;
     state = RADIOLIB_ERR_NETWORK_NOT_JOINED;
 
     while (state != RADIOLIB_LORAWAN_NEW_SESSION) {
 
         Serial.println(F("Join ('login') to the LoRaWAN Network"));
+        
+        // Update OLED with join attempt status
+        u8g2->clearBuffer();
+        u8g2->setFont(u8g2_font_NokiaLargeBold_tf);
+        char deveui_join[20];
+        sprintf(deveui_join, "%016llX", RADIOLIB_LORAWAN_DEV_EUI);
+        uint16_t str_w2 = u8g2->getStrWidth(deveui_join);
+        u8g2->drawStr((u8g2->getWidth() - str_w2) / 2, 16, deveui_join);
+        u8g2->drawHLine(5, 21, u8g2->getWidth() - 5);
+        u8g2->setFont(u8g2_font_6x10_tr);
+        u8g2->drawStr(0, 35, "Joining LoRaWAN...");
+        u8g2->drawStr(0, 50, "Attempting OTAA");
+        u8g2->sendBuffer();
 
+        // Clear old nonces to force fresh generation and prevent DevNonce reuse
+        Serial.println(F("Clearing old nonces to prevent DevNonce reuse"));
+        store.remove("nonces");
+        
         state = node.activateOTAA();
 
         // ##### save the join counters (nonces) to permanent store
@@ -325,6 +374,19 @@ void setup()
             Serial.print(F("Retrying join in "));
             Serial.print(sleepForSeconds / 1000);
             Serial.println(F(" seconds"));
+            
+            // Update OLED with join failure status
+            u8g2->clearBuffer();
+            u8g2->setFont(u8g2_font_NokiaLargeBold_tf);
+            char deveui_fail[20];
+            sprintf(deveui_fail, "%016llX", RADIOLIB_LORAWAN_DEV_EUI);
+            uint16_t str_w3 = u8g2->getStrWidth(deveui_fail);
+            u8g2->drawStr((u8g2->getWidth() - str_w3) / 2, 16, deveui_fail);
+            u8g2->drawHLine(5, 21, u8g2->getWidth() - 5);
+            u8g2->setFont(u8g2_font_6x10_tr);
+            u8g2->drawStr(0, 35, "Join Failed!");
+            u8g2->drawStr(0, 50, "Retry in 10s");
+            u8g2->sendBuffer();
 
             delay(sleepForSeconds);
 
@@ -335,12 +397,29 @@ void setup()
     // Print the DevAddr
     Serial.print("[LoRaWAN] DevAddr: ");
     Serial.println((unsigned long)node.getDevAddr(), HEX);
+    
+    // Update OLED with successful join status and device info
+    u8g2->clearBuffer();
+    u8g2->setFont(u8g2_font_NokiaLargeBold_tf);
+    char deveui_joined[20];
+    sprintf(deveui_joined, "%016llX", RADIOLIB_LORAWAN_DEV_EUI);
+    uint16_t str_w4 = u8g2->getStrWidth(deveui_joined);
+    u8g2->drawStr((u8g2->getWidth() - str_w4) / 2, 16, deveui_joined);
+    u8g2->drawHLine(5, 21, u8g2->getWidth() - 5);
+    u8g2->setFont(u8g2_font_6x10_tr);
+    u8g2->drawStr(0, 35, "LoRaWAN Joined!");
+    u8g2->drawStr(0, 50, "Ready to send");
+    u8g2->sendBuffer();
+    
+    // Display device info briefly
+    delay(2000);
+    displayDeviceInfo();
 
     // Enable the ADR algorithm (on by default which is preferable)
     node.setADR(true);
 
     // Set a datarate to start off with
-    node.setDatarate(5);
+    node.setDatarate(0);  // SF12 for maximum range
 
     // Manages uplink intervals to the TTN Fair Use Policy
     node.setDutyCycle(true, 1250);
@@ -353,8 +432,10 @@ void setup()
     if (u8g2) {
         u8g2->clearBuffer();
         u8g2->setFont(u8g2_font_NokiaLargeBold_tf );
-        uint16_t str_w =  u8g2->getStrWidth(BOARD_VARIANT_NAME);
-        u8g2->drawStr((u8g2->getWidth() - str_w) / 2, 16, BOARD_VARIANT_NAME);
+        char deveui_ready[20];
+        sprintf(deveui_ready, "%016llX", RADIOLIB_LORAWAN_DEV_EUI);
+        uint16_t str_w =  u8g2->getStrWidth(deveui_ready);
+        u8g2->drawStr((u8g2->getWidth() - str_w) / 2, 16, deveui_ready);
         u8g2->drawHLine(5, 21, u8g2->getWidth() - 5);
 
         u8g2->setCursor(0, 38);
@@ -364,9 +445,101 @@ void setup()
 }
 
 
+// Function to display device info and status on OLED
+void displayDeviceInfo() {
+    if (!u8g2) return;
+    
+    u8g2->clearBuffer();
+    u8g2->setFont(u8g2_font_NokiaLargeBold_tf);
+    
+    // Display DevEUI at the top
+    char deveui_str1[20];
+    sprintf(deveui_str1, "%016llX", RADIOLIB_LORAWAN_DEV_EUI);
+    uint16_t str_w = u8g2->getStrWidth(deveui_str1);
+    u8g2->drawStr((u8g2->getWidth() - str_w) / 2, 16, deveui_str1);
+    u8g2->drawHLine(5, 21, u8g2->getWidth() - 5);
+    
+    u8g2->setFont(u8g2_font_6x10_tr);
+    
+    // Display DevEUI
+    u8g2->drawStr(0, 35, "DevEUI:");
+    char deveui_str[20];
+    sprintf(deveui_str, "%016llX", RADIOLIB_LORAWAN_DEV_EUI);
+    u8g2->drawStr(50, 35, deveui_str);
+    
+    // Display DevAddr if available
+    if (node.getDevAddr() != 0) {
+        u8g2->drawStr(0, 50, "DevAddr:");
+        char devaddr_str[12];
+        sprintf(devaddr_str, "%08lX", (unsigned long)node.getDevAddr());
+        u8g2->drawStr(50, 50, devaddr_str);
+    } else {
+        u8g2->drawStr(0, 50, "DevAddr: N/A");
+    }
+    
+    u8g2->sendBuffer();
+}
+
+// Function to display message status on OLED
+void displayMessageStatus(int16_t state, uint32_t fCntUp, bool hasDownlink, size_t downlinkSize) {
+    if (!u8g2) return;
+    
+    u8g2->clearBuffer();
+    u8g2->setFont(u8g2_font_NokiaLargeBold_tf);
+    
+    // Display DevEUI at the top
+    char deveui_str2[20];
+    sprintf(deveui_str2, "%016llX", RADIOLIB_LORAWAN_DEV_EUI);
+    uint16_t str_w = u8g2->getStrWidth(deveui_str2);
+    u8g2->drawStr((u8g2->getWidth() - str_w) / 2, 16, deveui_str2);
+    u8g2->drawHLine(5, 21, u8g2->getWidth() - 5);
+    
+    u8g2->setFont(u8g2_font_6x10_tr);
+    
+    // Display frame counter
+    char fcnt_str[20];
+    sprintf(fcnt_str, "Frame: %lu", fCntUp);
+    u8g2->drawStr(0, 35, fcnt_str);
+    
+    // Display message status
+    if (state < RADIOLIB_ERR_NONE) {
+        u8g2->drawStr(0, 50, "Error sending");
+    } else if (hasDownlink) {
+        if (downlinkSize > 0) {
+            u8g2->drawStr(0, 50, "Downlink data");
+        } else {
+            u8g2->drawStr(0, 50, "MAC commands");
+        }
+    } else {
+        u8g2->drawStr(0, 50, "Uplink sent");
+    }
+    
+    u8g2->sendBuffer();
+}
+
+// Function to keep powerbank alive with small periodic load
+void powerbankKeepAlive() {
+    static unsigned long lastBlink = 0;
+    static bool ledState = false;
+    unsigned long currentTime = millis();
+    
+    // Blink LED every 10 seconds to keep powerbank active
+    if (currentTime - lastBlink >= 10000) {
+        ledState = !ledState;
+        digitalWrite(BOARD_LED, ledState ? LED_ON : !LED_ON);
+        lastBlink = currentTime;
+    }
+}
+
 void loop()
 {
+    // Keep powerbank alive with periodic LED activity
+    powerbankKeepAlive();
+    
     int16_t state = RADIOLIB_ERR_NONE;
+    
+    // Display device info on OLED
+    displayDeviceInfo();
 
     // set battery fill level - the LoRaWAN network server
     // may periodically request this information
@@ -425,6 +598,9 @@ void loop()
         } else {
             Serial.println(F("<MAC commands only>"));
         }
+        
+        // Display message status on OLED
+        displayMessageStatus(state, fCntUp, true, downlinkSize);
 
         // print RSSI (Received Signal Strength Indicator)
         Serial.print(F("[LoRaWAN] RSSI:\t\t"));
@@ -477,6 +653,9 @@ void loop()
 
     } else {
         Serial.println(F("[LoRaWAN] No downlink received"));
+        
+        // Display message status on OLED
+        displayMessageStatus(state, fCntUp, false, 0);
     }
 
     // wait before sending another packet
@@ -488,5 +667,10 @@ void loop()
     Serial.print(delayMs / 1000);
     Serial.println(F(" seconds\n"));
 
-    delay(delayMs);
+    // Keep powerbank alive during the main delay with frequent small activities
+    unsigned long startDelay = millis();
+    while (millis() - startDelay < delayMs) {
+        powerbankKeepAlive();
+        delay(1000); // Check every second
+    }
 }
