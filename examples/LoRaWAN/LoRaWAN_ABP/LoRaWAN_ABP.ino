@@ -31,9 +31,24 @@
 
 #include "configABP.h"
 
-// Additional includes for minimal setup
+// Additional includes for proper setup
 #include <Wire.h>
 #include <U8g2lib.h>
+
+// Debug function (same as OTAA)
+void debug(bool condition, const __FlashStringHelper* message, int16_t state, bool critical) {
+    if (condition) {
+        Serial.print(F("ERROR: "));
+        Serial.print(message);
+        Serial.print(F(" ("));
+        Serial.print(state);
+        Serial.println(F(")"));
+        if (critical) {
+            Serial.println(F("Critical error, halting."));
+            while (true);
+        }
+    }
+}
 
 // Function to display device info and status on OLED
 void displayDeviceInfo() {
@@ -112,57 +127,43 @@ void setup()
 {
     Serial.begin(115200);
 
-    // Minimal setup - avoid setupBoards() which can hang on USB-C power only
-    Serial.println(F("\nSetup ... "));
+    setupBoards();
     
-    // Initialize I2C for OLED only (minimal)
+    // Initialize OLED Display
     Wire.begin(I2C_SDA, I2C_SCL);
+    u8g2->begin();
+    u8g2->enableUTF8Print();
+    u8g2->setFont(u8g2_font_6x10_tr);
+    u8g2->setFontDirection(0);
     
-    // Initialize OLED display
-    u8g2 = new DISPLAY_MODEL(U8G2_R0, U8X8_PIN_NONE);
-    if (u8g2) {
-        u8g2->begin();
-        u8g2->clearBuffer();
-        u8g2->setFont(u8g2_font_NokiaLargeBold_tf);
-        u8g2->drawStr(0, 16, "Starting...");
-        u8g2->sendBuffer();
-    }
-
-    Serial.println(F("OLED initialized"));
+    // Show initial status on OLED
+    u8g2->clearBuffer();
+    u8g2->setFont(u8g2_font_NokiaLargeBold_tf);
+    char devaddr_init[12];
+    sprintf(devaddr_init, "%08lX", (unsigned long)devAddr);
+    uint16_t str_w = u8g2->getStrWidth(devaddr_init);
+    u8g2->drawStr((u8g2->getWidth() - str_w) / 2, 16, devaddr_init);
+    u8g2->drawHLine(5, 21, u8g2->getWidth() - 5);
+    u8g2->setFont(u8g2_font_6x10_tr);
+    u8g2->drawStr(0, 35, "LoRaWAN ABP");
+    u8g2->drawStr(0, 50, "Initializing...");
+    u8g2->sendBuffer();
 
 #ifdef  RADIO_TCXO_ENABLE
     pinMode(RADIO_TCXO_ENABLE, OUTPUT);
     digitalWrite(RADIO_TCXO_ENABLE, HIGH);
-    Serial.println(F("TCXO enabled"));
 #endif
 
+    delay(5000);  // Give time to switch to the serial monitor
+
+    Serial.println(F("\nSetup ... "));
+
     Serial.println(F("Initialise the radio"));
-    
-    // Try to initialize radio with timeout
-    unsigned long startTime = millis();
-    int state = RADIOLIB_ERR_NONE;
-    
-    // First try without RF switch configuration
-    Serial.println(F("Trying radio.begin() without RF switch..."));
+
+    int16_t state = 0;  // return value for calls to RadioLib
+    Serial.println(F("Initialise the radio"));
     state = radio.begin();
-    
-    if (state != RADIOLIB_ERR_NONE) {
-        Serial.print(F("Radio init failed: "));
-        Serial.println(state);
-        if (u8g2) {
-            u8g2->clearBuffer();
-            u8g2->setFont(u8g2_font_6x10_tr);
-            u8g2->drawStr(0, 16, "Radio init failed");
-            u8g2->drawStr(0, 30, "Error: ");
-            char errorStr[10];
-            sprintf(errorStr, "%d", state);
-            u8g2->drawStr(0, 45, errorStr);
-            u8g2->sendBuffer();
-        }
-        return; // Stop here if radio fails
-    }
-    
-    Serial.println(F("Radio initialized successfully"));
+    debug(state != RADIOLIB_ERR_NONE, F("Initialise radio failed"), state, true);
 
     // Setup LED for powerbank keep-alive
     pinMode(BOARD_LED, OUTPUT);
@@ -194,13 +195,8 @@ void setup()
     Serial.println(F("RF switch configured"));
 
     // LR1121 TCXO Voltage 2.85~3.15V
-    state = radio.setTCXO(3.0);
-    if (state != RADIOLIB_ERR_NONE) {
-        Serial.print(F("TCXO config failed: "));
-        Serial.println(state);
-    } else {
-        Serial.println(F("TCXO configured"));
-    }
+    radio.setTCXO(3.0);
+    Serial.println(F("TCXO configured"));
 #endif
 
     Serial.println(F("Initialise LoRaWAN Network credentials"));
