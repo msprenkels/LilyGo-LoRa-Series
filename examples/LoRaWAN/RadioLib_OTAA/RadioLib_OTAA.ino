@@ -63,8 +63,8 @@ LR1121 radio = new Module(RADIO_CS_PIN, RADIO_DIO9_PIN, RADIO_RST_PIN, RADIO_BUS
 // how often to send an uplink - consider legal & FUP constraints - see notes
 const uint32_t uplinkIntervalSeconds = 1UL * 60UL;    // 1 minute for testing
 
-// Uplink only mode - set to true to prevent waiting for downlinks
-const bool uplinkonly = true;
+// Uplink only mode - set to false to enable confirmed uplinks and downlink waiting
+const bool uplinkonly = false;
 
 // for the curious, the #ifndef blocks allow for automated testing &/or you can
 // put your EUI & keys in to your platformio.ini - see wiki for more tips
@@ -228,9 +228,7 @@ void setup()
     state = radio.begin();
     debug(state != RADIOLIB_ERR_NONE, F("Initialise radio failed"), state, true);
 
-    // Setup LED for powerbank keep-alive
-    pinMode(BOARD_LED, OUTPUT);
-    digitalWrite(BOARD_LED, !LED_ON); // Start with LED off
+    // LED setup removed - no longer needed for powerbank keep-alive
 
 #ifdef USING_DIO2_AS_RF_SWITCH
 #ifdef USING_SX1262
@@ -519,24 +517,11 @@ void displayMessageStatus(int16_t state, uint32_t fCntUp, bool hasDownlink, size
     u8g2->sendBuffer();
 }
 
-// Function to keep powerbank alive with small periodic load
-void powerbankKeepAlive() {
-    static unsigned long lastBlink = 0;
-    static bool ledState = false;
-    unsigned long currentTime = millis();
-    
-    // Blink LED every 10 seconds to keep powerbank active
-    if (currentTime - lastBlink >= 10000) {
-        ledState = !ledState;
-        digitalWrite(BOARD_LED, ledState ? LED_ON : !LED_ON);
-        lastBlink = currentTime;
-    }
-}
+// Powerbank keep-alive function removed - no longer needed
 
 void loop()
 {
-    // Keep powerbank alive with periodic LED activity
-    powerbankKeepAlive();
+    // Powerbank keep-alive removed - no longer needed
     
     int16_t state = RADIOLIB_ERR_NONE;
     
@@ -686,13 +671,11 @@ void loop()
     Serial.print(delayMs / 1000);
     Serial.println(F(" seconds\n"));
 
-    // Keep powerbank alive during the main delay with frequent small activities
+    // Simple delay loop - no powerbank keep-alive needed
     unsigned long startDelay = millis();
     Serial.println(F("[LoRaWAN] Starting delay loop..."));
     
     while (millis() - startDelay < delayMs) {
-        powerbankKeepAlive();
-        
         // Show progress every 10 seconds
         uint32_t elapsed = (millis() - startDelay) / 1000;
         if (elapsed % 10 == 0 && elapsed > 0) {
