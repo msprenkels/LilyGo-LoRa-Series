@@ -309,7 +309,7 @@ void setup()
         // moreover, Nonces didn't change so no need to re-save them
         if (state == RADIOLIB_ERR_NONE) {
             Serial.println(F("Successfully restored session - now activating"));
-            state = node.activateOTAA();
+            state = node.activateOTAA(joinDR);  // Use SF12 (datarate 0) for join
             debug((state != RADIOLIB_LORAWAN_SESSION_RESTORED), F("Failed to activate restored session"), state, true);
 
             // ##### close the store before returning
@@ -349,7 +349,7 @@ void setup()
         Serial.println(F("Clearing old nonces to prevent DevNonce reuse"));
         store.remove("nonces");
         
-        state = node.activateOTAA();
+        state = node.activateOTAA(joinDR);  // Use SF12 (datarate 0) for join
 
         // ##### save the join counters (nonces) to permanent store
         Serial.println(F("Saving nonces to flash"));
