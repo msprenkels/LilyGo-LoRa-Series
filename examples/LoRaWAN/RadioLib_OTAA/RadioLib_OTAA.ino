@@ -61,8 +61,10 @@ LR1121 radio = new Module(RADIO_CS_PIN, RADIO_DIO9_PIN, RADIO_RST_PIN, RADIO_BUS
 #endif
 
 // how often to send an uplink - consider legal & FUP constraints - see notes
-const uint32_t uplinkIntervalSeconds = 5UL * 60UL;    // minutes x seconds
+const uint32_t uplinkIntervalSeconds = 1UL * 60UL;    // 1 minute for testing
 
+// Uplink only mode - set to true to prevent waiting for downlinks
+const bool uplinkonly = true;
 
 // for the curious, the #ifndef blocks allow for automated testing &/or you can
 // put your EUI & keys in to your platformio.ini - see wiki for more tips
@@ -421,8 +423,8 @@ void setup()
     // Set a datarate to start off with
     node.setDatarate(0);  // SF12 for maximum range
 
-    // Manages uplink intervals to the TTN Fair Use Policy
-    node.setDutyCycle(true, 1250);
+    // Duty cycle disabled for testing - removed to prevent delays
+    // node.setDutyCycle(true, 1250);
 
     // Enable the dwell time limits - 400ms is the limit for the US
     node.setDwellTime(true, 400);
@@ -571,106 +573,138 @@ void loop()
 
     uint8_t fPort = 10;
 
-    // Retrieve the last uplink frame counter
-    uint32_t fCntUp = node.getFCntUp();
-
-    // Send a confirmed uplink on the second uplink
-    // and also request the LinkCheck and DeviceTime MAC commands
-    Serial.println(F("Sending uplink"));
-    if (fCntUp == 1) {
-        Serial.println(F("and requesting LinkCheck and DeviceTime"));
-        node.sendMacCommandReq(RADIOLIB_LORAWAN_MAC_LINK_CHECK);
-        node.sendMacCommandReq(RADIOLIB_LORAWAN_MAC_DEVICE_TIME);
-        state = node.sendReceive(uplinkPayload, sizeof(uplinkPayload), fPort, downlinkPayload, &downlinkSize, true, &uplinkDetails, &downlinkDetails);
-    } else {
+    // Check uplinkonly setting to determine transmission mode
+    if (uplinkonly) {
+        // Uplink only mode - send unconfirmed uplink without waiting for downlinks
+        Serial.println(F("Uplink only mode - sending unconfirmed uplink"));
         state = node.sendReceive(uplinkPayload, sizeof(uplinkPayload), fPort, downlinkPayload, &downlinkSize, false, &uplinkDetails, &downlinkDetails);
-    }
-    debug(state < RADIOLIB_ERR_NONE, F("Error in sendReceive"), state, false);
-
-    // Check if a downlink was received
-    // (state 0 = no downlink, state 1/2 = downlink in window Rx1/Rx2)
-    if (state > 0) {
-        Serial.println(F("Received a downlink"));
-        // Did we get a downlink with data for us
-        if (downlinkSize > 0) {
-            Serial.println(F("Downlink data: "));
-            arrayDump(downlinkPayload, downlinkSize);
+        debug(state < RADIOLIB_ERR_NONE, F("Error in sendReceive"), state, false);
+        
+        // Get frame counter AFTER transmission to show current value
+        uint32_t fCntUp = node.getFCntUp();
+        
+        // Display message status on OLED
+        if (state < RADIOLIB_ERR_NONE) {
+            displayMessageStatus(state, fCntUp, false, 0);
         } else {
-            Serial.println(F("<MAC commands only>"));
+            displayMessageStatus(state, fCntUp, false, 0);
         }
-        
-        // Display message status on OLED
-        displayMessageStatus(state, fCntUp, true, downlinkSize);
-
-        // print RSSI (Received Signal Strength Indicator)
-        Serial.print(F("[LoRaWAN] RSSI:\t\t"));
-        Serial.print(radio.getRSSI());
-        Serial.println(F(" dBm"));
-
-        // print SNR (Signal-to-Noise Ratio)
-        Serial.print(F("[LoRaWAN] SNR:\t\t"));
-        Serial.print(radio.getSNR());
-        Serial.println(F(" dB"));
-
-        // print extra information about the event
-        Serial.println(F("[LoRaWAN] Event information:"));
-        Serial.print(F("[LoRaWAN] Confirmed:\t"));
-        Serial.println(downlinkDetails.confirmed);
-        Serial.print(F("[LoRaWAN] Confirming:\t"));
-        Serial.println(downlinkDetails.confirming);
-        Serial.print(F("[LoRaWAN] Datarate:\t"));
-        Serial.println(downlinkDetails.datarate);
-        Serial.print(F("[LoRaWAN] Frequency:\t"));
-        Serial.print(downlinkDetails.freq, 3);
-        Serial.println(F(" MHz"));
-        Serial.print(F("[LoRaWAN] Frame count:\t"));
-        Serial.println(downlinkDetails.fCnt);
-        Serial.print(F("[LoRaWAN] Port:\t\t"));
-        Serial.println(downlinkDetails.fPort);
-        Serial.print(F("[LoRaWAN] Time-on-air: \t"));
-        Serial.print(node.getLastToA());
-        Serial.println(F(" ms"));
-        Serial.print(F("[LoRaWAN] Rx window: \t"));
-        Serial.println(state);
-
-        uint8_t margin = 0;
-        uint8_t gwCnt = 0;
-        if (node.getMacLinkCheckAns(&margin, &gwCnt) == RADIOLIB_ERR_NONE) {
-            Serial.print(F("[LoRaWAN] LinkCheck margin:\t"));
-            Serial.println(margin);
-            Serial.print(F("[LoRaWAN] LinkCheck count:\t"));
-            Serial.println(gwCnt);
-        }
-
-        uint32_t networkTime = 0;
-        uint8_t fracSecond = 0;
-        if (node.getMacDeviceTimeAns(&networkTime, &fracSecond, true) == RADIOLIB_ERR_NONE) {
-            Serial.print(F("[LoRaWAN] DeviceTime Unix:\t"));
-            Serial.println(networkTime);
-            Serial.print(F("[LoRaWAN] DeviceTime second:\t1/"));
-            Serial.println(fracSecond);
-        }
-
     } else {
-        Serial.println(F("[LoRaWAN] No downlink received"));
+        // Normal mode - Send a confirmed uplink on the second uplink
+        // and also request the LinkCheck and DeviceTime MAC commands
+        Serial.println(F("Sending uplink"));
         
-        // Display message status on OLED
-        displayMessageStatus(state, fCntUp, false, 0);
+        // Get frame counter BEFORE transmission for conditional logic
+        uint32_t fCntUp = node.getFCntUp();
+        
+        if (fCntUp == 1) {
+            Serial.println(F("and requesting LinkCheck and DeviceTime"));
+            node.sendMacCommandReq(RADIOLIB_LORAWAN_MAC_LINK_CHECK);
+            node.sendMacCommandReq(RADIOLIB_LORAWAN_MAC_DEVICE_TIME);
+            state = node.sendReceive(uplinkPayload, sizeof(uplinkPayload), fPort, downlinkPayload, &downlinkSize, true, &uplinkDetails, &downlinkDetails);
+        } else {
+            state = node.sendReceive(uplinkPayload, sizeof(uplinkPayload), fPort, downlinkPayload, &downlinkSize, false, &uplinkDetails, &downlinkDetails);
+        }
+        debug(state < RADIOLIB_ERR_NONE, F("Error in sendReceive"), state, false);
+
+        // Check if a downlink was received
+        // (state 0 = no downlink, state 1/2 = downlink in window Rx1/Rx2)
+        if (state > 0) {
+            Serial.println(F("Received a downlink"));
+            // Did we get a downlink with data for us
+            if (downlinkSize > 0) {
+                Serial.println(F("Downlink data: "));
+                arrayDump(downlinkPayload, downlinkSize);
+            } else {
+                Serial.println(F("<MAC commands only>"));
+            }
+            
+            // Display message status on OLED
+            displayMessageStatus(state, fCntUp, true, downlinkSize);
+
+            // print RSSI (Received Signal Strength Indicator)
+            Serial.print(F("[LoRaWAN] RSSI:\t\t"));
+            Serial.print(radio.getRSSI());
+            Serial.println(F(" dBm"));
+
+            // print SNR (Signal-to-Noise Ratio)
+            Serial.print(F("[LoRaWAN] SNR:\t\t"));
+            Serial.print(radio.getSNR());
+            Serial.println(F(" dB"));
+
+            // print extra information about the event
+            Serial.println(F("[LoRaWAN] Event information:"));
+            Serial.print(F("[LoRaWAN] Confirmed:\t"));
+            Serial.println(downlinkDetails.confirmed);
+            Serial.print(F("[LoRaWAN] Confirming:\t"));
+            Serial.println(downlinkDetails.confirming);
+            Serial.print(F("[LoRaWAN] Datarate:\t"));
+            Serial.println(downlinkDetails.datarate);
+            Serial.print(F("[LoRaWAN] Frequency:\t"));
+            Serial.print(downlinkDetails.freq, 3);
+            Serial.println(F(" MHz"));
+            Serial.print(F("[LoRaWAN] Frame count:\t"));
+            Serial.println(downlinkDetails.fCnt);
+            Serial.print(F("[LoRaWAN] Port:\t\t"));
+            Serial.println(downlinkDetails.fPort);
+            Serial.print(F("[LoRaWAN] Time-on-air: \t"));
+            Serial.print(node.getLastToA());
+            Serial.println(F(" ms"));
+            Serial.print(F("[LoRaWAN] Rx window: \t"));
+            Serial.println(state);
+
+            uint8_t margin = 0;
+            uint8_t gwCnt = 0;
+            if (node.getMacLinkCheckAns(&margin, &gwCnt) == RADIOLIB_ERR_NONE) {
+                Serial.print(F("[LoRaWAN] LinkCheck margin:\t"));
+                Serial.println(margin);
+                Serial.print(F("[LoRaWAN] LinkCheck count:\t"));
+                Serial.println(gwCnt);
+            }
+
+            uint32_t networkTime = 0;
+            uint8_t fracSecond = 0;
+            if (node.getMacDeviceTimeAns(&networkTime, &fracSecond, true) == RADIOLIB_ERR_NONE) {
+                Serial.print(F("[LoRaWAN] DeviceTime Unix:\t"));
+                Serial.println(networkTime);
+                Serial.print(F("[LoRaWAN] DeviceTime second:\t1/"));
+                Serial.println(fracSecond);
+            }
+
+        } else {
+            Serial.println(F("[LoRaWAN] No downlink received"));
+            
+            // Display message status on OLED
+            displayMessageStatus(state, fCntUp, false, 0);
+        }
     }
 
     // wait before sending another packet
-    uint32_t minimumDelay = uplinkIntervalSeconds * 1000UL;
-    uint32_t interval = node.timeUntilUplink();     // calculate minimum duty cycle delay (per FUP & law!)
-    uint32_t delayMs = max(interval, minimumDelay); // cannot send faster than duty cycle allows
-
+    uint32_t delayMs = uplinkIntervalSeconds * 1000UL;  // Use our 1-minute setting
+    
     Serial.print(F("[LoRaWAN] Next uplink in "));
     Serial.print(delayMs / 1000);
     Serial.println(F(" seconds\n"));
 
     // Keep powerbank alive during the main delay with frequent small activities
     unsigned long startDelay = millis();
+    Serial.println(F("[LoRaWAN] Starting delay loop..."));
+    
     while (millis() - startDelay < delayMs) {
         powerbankKeepAlive();
+        
+        // Show progress every 10 seconds
+        uint32_t elapsed = (millis() - startDelay) / 1000;
+        if (elapsed % 10 == 0 && elapsed > 0) {
+            Serial.print(F("[LoRaWAN] Delay progress: "));
+            Serial.print(elapsed);
+            Serial.print(F("/"));
+            Serial.print(delayMs / 1000);
+            Serial.println(F(" seconds"));
+        }
+        
         delay(1000); // Check every second
     }
+    
+    Serial.println(F("[LoRaWAN] Delay completed, continuing to next loop iteration"));
 }
